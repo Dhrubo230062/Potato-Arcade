@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Potato Arcade</title>
+<style>
+html,body{margin:0;background:black;height:100%;overflow:hidden;font-family:sans-serif;}
+#game{width:100%;height:100%;}
+#loading{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+color:#0d59f2;font-weight:700;font-size:18px;text-transform:uppercase;letter-spacing:.1em;}
+</style>
+</head>
+<body>
+<div id="loading">Loading...</div>
+<div id="game"></div>
+<script>
+// ── Virtual Gamepad System ────────────────────────────────────────────────
+(function() {
+  var virtualGamepads = [null, null, null, null];
+  var buttonStates = [
+    new Array(17).fill(false),
+    new Array(17).fill(false),
+    new Array(17).fill(false),
+    new Array(17).fill(false)
+  ];
+  // How many players are expected (set by host page before game starts)
+  var expectedPlayers = 1;
+
+  function makeButtons(states) {
+    return states.map(function(p) {
+      return { pressed: p, touched: p, value: p ? 1.0 : 0.0 };
+    });
+  }
+
+  function createGamepad(index) {
+    return {
+      id: 'Virtual NeoGeo Controller ' + (index + 1),
+      index: index,
+      connected: true,
+      timestamp: performance.now(),
+      mapping: 'standard',
+      axes: new Float32Array([0, 0, 0, 0]),
+      buttons: makeButtons(buttonStates[index])
+    };
+  }
+
+  function fireGamepadConnected(index) {
+    if (!virtualGamepads[index]) {
+      virtualGamepads[index] = createGamepad(index);
+    }
+    var ev = new Event('gamepadconnected', { bubbles: false });
+    Object.defineProperty(ev, 'gamepad', {
+      value: virtualGamepads[index], enumerable: true, writable: false
+    });
+    window.dispatchEvent(ev);
+    console.log('[VGP] gamepadconnected fired for Player', index + 1);
+  }
+
+  // Pre-create slots and fire events for all expected players
+  // Called from EJS_onGameStart with a delay
+  window._initVirtualGamepads = function(count) {
+    console.log('[VGP] Initialising', count, 'virtual gamepad(s)...');
+    for (var i = 0; i < count; i++) {
+      (function(idx) {
+        // Stagger each player by 200ms so RetroArch processes them one at a time
+        setTimeout(function() {
+          fireGamepadConnected(idx);
+        }, idx * 200);
+      })(i);
+    }
+  };
+
+  // Override getGamepads
+  var _orig = navigator.getGamepads ? navigator.getGamepads.bind(navigator) : function(){return [];};
+  navigator.getGamepads = function() {
+    var real = _orig() || [];
+    var result = [null, null, null, null];
+    for (var i = 0; i < 4; i++) {
+      if (virtualGamepads[i]) {
+        var gp = virtualGamepads[i];
+        gp.timestamp = performance.now();
+        gp.buttons = makeButtons(buttonStates[i]);
+        result[i] = gp;
+      } else if (real[i]) {
+        result[i] = real[i];
+      }
+    }
+    return result;
+  };
+
+  // Listen for messages from host page
+  window.addEventListener('message', function(event) {
+    if (!event.data) return;
+
+    // Host tells us how many players joined before starting
+    if (event.data.type === 'SET_PLAYER_COUNT') {
+      expectedPlayers = Math.max(1, Math.min(4, event.data.count | 0));
+      console.log('[VGP] Expected players set to', expectedPlayers);
+    }
+
+    // Button input from a controller
+    if (event.data.type === 'VIRTUAL_GAMEPAD_UPDATE') {
+      var pi = event.data.playerIndex;
+      var bi = event.data.buttonIndex;
+      var st = event.data.state;
+      if (pi == null || pi < 0 || pi >= 4) return;
+      if (bi == null || bi < 0 || bi >= 17) return;
+
+      // Lazy-create gamepad on first input (fallback if pre-init didn't work)
+      var isNew = !virtualGamepads[pi];
+      if (isNew) virtualGamepads[pi] = createGamepad(pi);
+      buttonStates[pi][bi] = (st === 'down');
+      if (isNew) {
+        var ev2 = new Event('gamepadconnected', { bubbles: false });
+        Object.defineProperty(ev2, 'gamepad', {
+          value: virtualGamepads[pi], enumerable: true, writable: false
+        });
+        window.dispatchEvent(ev2);
+        console.log('[VGP] Lazy-created gamepad for Player', pi + 1);
+      }
+    }
+  });
+
+  console.log('[VGP] Virtual gamepad system ready');
+})();
+
+// ── EmulatorJS Config ─────────────────────────────────────────────────────
+var rom = new URLSearchParams(location.search).get('rom');
+var isNeogeo = rom && rom.startsWith('neogeo/');
+
+window.EJS_player        = '#game';
+window.EJS_pathtodata    = 'https://cdn.emulatorjs.org/stable/data/';
+window.EJS_startOnLoaded = true;
+window.EJS_color         = '#0d59f2';
+window.EJS_gameName      = rom ? rom.split('/').pop().replace('.zip','') : 'Unknown';
+window.EJS_core          = isNeogeo ? 'fbneo' : 'mame2003_plus';
+window.EJS_gameUrl       = '/roms/' + rom;
+if (isNeogeo) window.EJS_arcade = true;
+
+window.EJS_onGameStart = function() {
+  var el = document.getElementById('loading');
+  if (el) el.style.display = 'none';
+
+  // ── THE FIX ──
+  // Wait 2000ms after game starts for RetroArch WASM to finish
+  // its gamepad polling initialisation, THEN register all player slots.
+  // This solves the race condition where P2+ shows as "Not Connected".
+  setTimeout(function() {
+    window._initVirtualGamepads(window._expectedPlayerCount || 1);
+  }, 2000);
+};
+
+// Solo mobile touch controls
+window.EJS_VirtualGamepadSettings = [
+  { type:'zone', location:'left', left:'50%', top:'50%', joystickInput:false, inputValues:[4,5,6,7], color:'red' },
+  { type:'button', text:'A', id:'btnA', location:'right', left:40, top:80, bold:true, input_value:8 },
+  { type:'button', text:'B', id:'btnB', location:'right', left:81, top:40, bold:true, input_value:0 },
+  { type:'button', text:'C', id:'btnC', location:'right', top:40, left:0, bold:true, input_value:9 },
+  { type:'button', text:'D', id:'btnD', location:'right', left:40, top:0, bold:true, input_value:1 },
+  { type:'button', text:'Start', id:'btnStart', location:'center', left:60, fontSize:15, block:true, input_value:3 },
+  { type:'button', text:'Select', id:'btnSel', location:'center', left:-5, fontSize:15, block:true, input_value:2 },
+];
+
+var s = document.createElement('script');
+s.src = 'https://cdn.emulatorjs.org/stable/data/loader.js';
+document.body.appendChild(s);
+</script>
+</body>
+</html>

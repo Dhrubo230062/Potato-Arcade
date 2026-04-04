@@ -1,0 +1,15 @@
+@import "tailwindcss";
+
+body {
+  background: #101622; /* Potato Arcade dark navy — prevents black flash before hydration */
+}
+
+@layer utilities {
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}

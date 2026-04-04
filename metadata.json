@@ -1,0 +1,5 @@
+{
+  "name": "NeoGeo Web Arcade",
+  "description": "A clean and stable web-based arcade for playing Neo Geo games directly in the browser using EmulatorJS.",
+  "requestFramePermissions": []
+}
