@@ -26,13 +26,12 @@ export default function ControllerPage() {
 
   const sendInput = useCallback((input: string, state: 'down' | 'up') => {
     if (!connected) return;
-    if (state === 'down' && window.navigator.vibrate) window.navigator.vibrate(8);
     const ch = chRef.current;
     if (ch && ch.readyState === 'open') {
-      // LAN path — goes through router directly, ~2-5ms
+      // LAN path — WebRTC DataChannel, ~1-5 ms
       ch.send(JSON.stringify({ input, state, playerIndex: playerIdxRef.current }));
     } else {
-      // Internet path — relay through Railway server, fallback
+      // Internet fallback — Socket.IO relay
       socket.emit('controller-input', { roomId, input, state });
     }
   }, [connected, roomId]);
@@ -65,9 +64,10 @@ export default function ControllerPage() {
       const pc = new RTCPeerConnection(STUN);
       pcRef.current = pc;
 
+      // unreliable + unordered = lowest possible latency for game inputs
       const ch = pc.createDataChannel('input', { ordered: false, maxRetransmits: 0 });
       chRef.current = ch;
-      ch.onopen  = () => { setRtcReady(true);  console.log('[WebRTC] DataChannel open — LAN active'); };
+      ch.onopen  = () => { setRtcReady(true);  console.log('[WebRTC] DataChannel open'); };
       ch.onclose = () => { setRtcReady(false); console.log('[WebRTC] DataChannel closed'); };
 
       pc.onicecandidate = (e) => {
@@ -86,9 +86,10 @@ export default function ControllerPage() {
     socket.on('webrtc-ice', ({ candidate }: { candidate: RTCIceCandidateInit }) => {
       pcRef.current?.addIceCandidate(candidate).catch(() => {});
     });
-    // Start WebRTC when game starts — host is on play page and ready
+
+    // FIX: reduced from 500 ms → 100 ms so WebRTC is ready sooner after game start
     socket.on('game-started', ({ playerIdx }: { playerIdx?: number }) => {
-      setTimeout(() => setupWebRTC(playerIdx ?? playerIdxRef.current), 500);
+      setTimeout(() => setupWebRTC(playerIdx ?? playerIdxRef.current), 100);
     });
 
     socket.on('player-left', (updatedPlayers) => {
@@ -116,7 +117,6 @@ export default function ControllerPage() {
       socket.off('game-started');
       if (pcRef.current) { pcRef.current.close(); pcRef.current = null; }
       chRef.current = null;
-
     };
   }, [roomId]);
 
@@ -147,7 +147,6 @@ export default function ControllerPage() {
         setConnected(true);
         setIsOp(response.isOp);
         setPlayers(response.players);
-        // Save our player index for WebRTC DataChannel messages
         const myIdx = response.players.findIndex((p: any) => p.id === socket.id);
         playerIdxRef.current = myIdx >= 0 ? myIdx : 0;
         localStorage.setItem(`arcade_name_${roomId}`, finalName);
@@ -204,14 +203,14 @@ export default function ControllerPage() {
     </motion.button>
   );
 
-  // ── Joystick — EmulatorJS style circular drag joystick ─────────────────
+  // ── Joystick ─────────────────────────────────────────────────────────────
   const Joystick = () => {
     const baseRef  = useRef<HTMLDivElement>(null);
     const stickRef = useRef<HTMLDivElement>(null);
     const activeRef = useRef<Set<string>>(new Set());
-    const BASE_R  = 72;   // outer circle radius px
-    const STICK_R = 32;   // inner knob radius px
-    const DEAD    = 14;   // dead zone px
+    const BASE_R  = 72;
+    const STICK_R = 32;
+    const DEAD    = 14;
     const MAX_TRAVEL = BASE_R - STICK_R - 4;
 
     const getDirections = (x: number, y: number) => {
@@ -221,7 +220,6 @@ export default function ControllerPage() {
       const ax = Math.abs(x), ay = Math.abs(y);
       if (ax > DEAD) dirs.push(x > 0 ? 'ArrowRight' : 'ArrowLeft');
       if (ay > DEAD) dirs.push(y > 0 ? 'ArrowDown'  : 'ArrowUp');
-      // suppress diagonal if strongly one-directional
       if (dirs.length === 2 && Math.min(ax,ay)/Math.max(ax,ay) < 0.38)
         dirs.splice(ax > ay ? 1 : 0, 1);
       return dirs;
@@ -275,7 +273,6 @@ export default function ControllerPage() {
           boxShadow: '0 4px 24px rgba(0,0,0,0.4)',
         }}
       >
-        {/* Inner knob */}
         <div
           ref={stickRef}
           style={{
@@ -356,7 +353,7 @@ export default function ControllerPage() {
               )}
             </div>
             <button onClick={handleStartGame}
-              className="mt-6 w-full bg-emerald-500 text-black font-black italic uppercase tracking-tighter p-4 rounded-2xl active:bg-emerald-400">
+              className="mt-6 w-full bg-emerald-500 text-black font-black italic uppercase tracking-tighter p-4 rounded-2xl active:bg-emerald-400 touch-auto">
               ▶ START GAME
             </button>
           </motion.div>
@@ -391,7 +388,6 @@ export default function ControllerPage() {
       ) : (
         <div className="h-full flex items-center justify-between px-10 py-4 relative">
 
-          {/* Joystick */}
           <Joystick />
 
           {/* Center */}
