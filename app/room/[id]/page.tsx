@@ -56,6 +56,12 @@ export default function RoomPage() {
     socket.on('room-closed',   ()            => router.push('/'));
     socket.on('kicked',        ()            => router.push('/'));
 
+    // FIX: When a controller (phone) triggers start-game, the server emits
+    // game-started back to the host socket. Navigate the host to the play page.
+    socket.on('game-started', (g: Game) => {
+      if (g?.filename) router.push(`/play?rom=${g.filename}&room=${roomId}`);
+    });
+
     return () => {
       socket.off('connect',       onConnect);
       socket.off('disconnect',    updateStatus);
@@ -65,6 +71,7 @@ export default function RoomPage() {
       socket.off('game-selected');
       socket.off('room-closed');
       socket.off('kicked');
+      socket.off('game-started');
     };
   }, [roomId, router]);
 
@@ -77,6 +84,7 @@ export default function RoomPage() {
   const handleStartGame = useCallback(() => {
     if (!gameSelected) { setShowPicker(true); return; }
     socket.emit('start-game', { roomId });
+    // Host navigates immediately; other players navigate via game-started event
     router.push(`/play?rom=${gameSelected.filename}&room=${roomId}`);
   }, [gameSelected, roomId, router]);
 
@@ -168,7 +176,7 @@ export default function RoomPage() {
         <div className="w-16 hidden sm:block" />
       </header>
 
-      {/* ── Selected game banner — center prominence ── */}
+      {/* ── Selected game banner ── */}
       <AnimatePresence>
         {gameSelected && (
           <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}
@@ -206,8 +214,6 @@ export default function RoomPage() {
           <div className="p-4 md:p-5 bg-white rounded-[28px] mb-5 relative z-10">
             {appUrl && <QRCodeSVG value={controllerUrl} size={168} level="H" />}
           </div>
-
-
 
           <div className="bg-black/50 px-4 py-2 rounded-2xl border border-zinc-800 relative z-10">
             <span className="text-zinc-500 text-[10px] font-bold uppercase tracking-widest mr-2">Room ID:</span>
