@@ -23,8 +23,8 @@ color:#0d59f2;font-weight:700;font-size:18px;text-transform:uppercase;letter-spa
     new Array(17).fill(false),
     new Array(17).fill(false)
   ];
-  // How many players are expected (set by host page before game starts)
   var expectedPlayers = 1;
+  var gameStarted = false;
 
   function makeButtons(states) {
     return states.map(function(p) {
@@ -56,13 +56,10 @@ color:#0d59f2;font-weight:700;font-size:18px;text-transform:uppercase;letter-spa
     console.log('[VGP] gamepadconnected fired for Player', index + 1);
   }
 
-  // Pre-create slots and fire events for all expected players
-  // Called from EJS_onGameStart with a delay
   window._initVirtualGamepads = function(count) {
     console.log('[VGP] Initialising', count, 'virtual gamepad(s)...');
     for (var i = 0; i < count; i++) {
       (function(idx) {
-        // Stagger each player by 200ms so RetroArch processes them one at a time
         setTimeout(function() {
           fireGamepadConnected(idx);
         }, idx * 200);
@@ -70,7 +67,7 @@ color:#0d59f2;font-weight:700;font-size:18px;text-transform:uppercase;letter-spa
     }
   };
 
-  // Override getGamepads
+  // Override getGamepads — always reflect current virtual state
   var _orig = navigator.getGamepads ? navigator.getGamepads.bind(navigator) : function(){return [];};
   navigator.getGamepads = function() {
     var real = _orig() || [];
@@ -92,13 +89,20 @@ color:#0d59f2;font-weight:700;font-size:18px;text-transform:uppercase;letter-spa
   window.addEventListener('message', function(event) {
     if (!event.data) return;
 
-    // Host tells us how many players joined before starting
     if (event.data.type === 'SET_PLAYER_COUNT') {
-      expectedPlayers = Math.max(1, Math.min(4, event.data.count | 0));
-      console.log('[VGP] Expected players set to', expectedPlayers);
+      var count = Math.max(1, Math.min(4, event.data.count | 0));
+      expectedPlayers = count;
+      // FIX: also set on window so EJS_onGameStart can read it correctly
+      window._expectedPlayerCount = count;
+      console.log('[VGP] Expected players =', count);
+
+      // If the game is already running when count is updated (e.g. player joins
+      // after game starts), reinitialise gamepads immediately.
+      if (gameStarted) {
+        window._initVirtualGamepads(count);
+      }
     }
 
-    // Button input from a controller
     if (event.data.type === 'VIRTUAL_GAMEPAD_UPDATE') {
       var pi = event.data.playerIndex;
       var bi = event.data.buttonIndex;
@@ -106,7 +110,6 @@ color:#0d59f2;font-weight:700;font-size:18px;text-transform:uppercase;letter-spa
       if (pi == null || pi < 0 || pi >= 4) return;
       if (bi == null || bi < 0 || bi >= 17) return;
 
-      // Lazy-create gamepad on first input (fallback if pre-init didn't work)
       var isNew = !virtualGamepads[pi];
       if (isNew) virtualGamepads[pi] = createGamepad(pi);
       buttonStates[pi][bi] = (st === 'down');
@@ -141,12 +144,15 @@ window.EJS_onGameStart = function() {
   var el = document.getElementById('loading');
   if (el) el.style.display = 'none';
 
-  // ── THE FIX ──
-  // Wait 2000ms after game starts for RetroArch WASM to finish
-  // its gamepad polling initialisation, THEN register all player slots.
-  // This solves the race condition where P2+ shows as "Not Connected".
+  // Mark game as started so future SET_PLAYER_COUNT messages trigger reinit
+  window._gameStarted = true;
+
+  // FIX: use window._expectedPlayerCount (set by host postMessage) not a
+  // hardcoded fallback of 1. Delay 2 s to let RetroArch finish WASM init.
+  var playerCount = window._expectedPlayerCount || 1;
+  console.log('[VGP] Game started — will init', playerCount, 'gamepad(s) in 2 s');
   setTimeout(function() {
-    window._initVirtualGamepads(window._expectedPlayerCount || 1);
+    window._initVirtualGamepads(playerCount);
   }, 2000);
 };
 
