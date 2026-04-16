@@ -93,7 +93,7 @@ function PlayContent() {
   // When iframe loads, send the current player count
   const handleIframeLoad = () => {
     // Small delay to let the iframe script initialise
-    setTimeout(() => sendPlayerCount(playerCountRef.current), 300);
+    setTimeout(() => sendPlayerCount(playerCountRef.current), 100);
   };
 
   if (!rom) {
